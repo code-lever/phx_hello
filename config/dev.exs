@@ -26,9 +26,9 @@ config :hello, HelloWeb.Endpoint,
   secret_key_base: "mSn+Wp6aln9ut+k3IfWtHQf9xWHChCeJRLtrTkNoPRcRiHkkig1HOl5T1T7LnC/3",
   watchers: [
     # Start the esbuild watcher by calling Esbuild.install_and_run(:default, args)
-    esbuild: {Esbuild, :install_and_run, [:default, ~w(--sourcemap=inline --watch)]}
+    esbuild: {Esbuild, :install_and_run, [:default, ~w(--sourcemap=inline --watch)]},
+    tailwind: {Tailwind, :install_and_run, [:default, ~w(--watch)]}
   ]
-
 # ## SSL Support
 #
 # In order to use HTTPS in development, a self-signed
