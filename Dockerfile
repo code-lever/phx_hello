@@ -1,36 +1,47 @@
-# Find eligible builder and runner images on Docker Hub. We use Ubuntu/Debian instead of
-# Alpine to avoid DNS resolution issues in production.
-#
-# https://hub.docker.com/r/hexpm/elixir/tags?page=1&name=ubuntu
-# https://hub.docker.com/_/ubuntu?tab=tags
-#
-#
-# This file is based on these images:
-#
-#   - https://hub.docker.com/r/hexpm/elixir/tags - for the build image
-#   - https://hub.docker.com/_/debian?tab=tags&page=1&name=bullseye-20220801-slim - for the release image
-#   - https://pkgs.org/ - resource for finding needed packages
-#   - Ex: hexpm/elixir:1.14.0-erlang-25.0.4-debian-bullseye-20210902-slim
-#
+# File: hello/Dockerfile
+
+# Use the HexPM docker image for building the release
+# https://github.com/hexpm/bob#docker-images
+# This Dockerfile is based on the following images:
+#  - https://hub.docker.com/layers/hexpm/elixir/1.14.0-erlang-25.0.4-ubuntu-jammy-20220428/images/sha256-a38946d362ba922840f875d291ec95652ce21b47a5d069c47c47cdd4f12b17f9?context=explore
+#  - https://hub.docker.com/layers/library/ubuntu/jammy-20220428/images/sha256-aa6c2c047467afc828e77e306041b7fa4a65734fe3449a54aa9c280822b0d87d?context=explore
 ARG ELIXIR_VERSION=1.14.0
 ARG OTP_VERSION=25.0.4
-ARG DEBIAN_VERSION=bullseye-20220801-slim
+# Ubuntu 22.04.1 LTS (Jammy Jellyfish)
+ARG UBUNTU_VERSION=jammy-20220428
 
-ARG BUILDER_IMAGE="hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}"
-ARG RUNNER_IMAGE="debian:${DEBIAN_VERSION}"
+ARG BUILDER_IMAGE="hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-ubuntu-${UBUNTU_VERSION}"
+# Run the release with the same version of vanilla Ubuntu
+ARG RUNNER_IMAGE="ubuntu:${UBUNTU_VERSION}"
+
+ARG APP_NAME=hello
+# The directory where the application will be built in the builder image
+# In the runner image, it will be run in a system users home directory
+# in a subdirectory with the same name
+ARG APP_ROOT="/app"
 
 FROM ${BUILDER_IMAGE} as builder
+ARG APP_NAME
+ARG APP_ROOT
 
 # install build dependencies
-RUN apt-get update -y && apt-get install -y build-essential git \
-    && apt-get clean && rm -f /var/lib/apt/lists/*_*
+RUN apt-get update -y \
+    && apt-get install -y build-essential git \
+    && apt-get install -y curl \
+    && apt-get clean \
+    && rm -f /var/lib/apt/lists/*_*
 
-# prepare build dir
-WORKDIR /app
+# Install Node.js LTS (v16.x)
+# https://github.com/nodesource/distributions/blob/master/README.md
+RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - &&\
+    apt-get install -y nodejs
 
 # install hex + rebar
 RUN mix local.hex --force && \
     mix local.rebar --force
+
+# prepare build dir
+WORKDIR ${APP_ROOT}
 
 # set build ENV
 ENV MIX_ENV="prod"
@@ -47,14 +58,13 @@ COPY config/config.exs config/${MIX_ENV}.exs config/
 RUN mix deps.compile
 
 COPY priv priv
-
+COPY assets assets
 COPY lib lib
 
-COPY assets assets
-
 # compile assets
+RUN cd assets \
+    && npm ci
 RUN mix assets.deploy
-
 # Compile the release
 RUN mix compile
 
@@ -64,29 +74,40 @@ COPY config/runtime.exs config/
 COPY rel rel
 RUN mix release
 
+########################################################################
+
 # start a new build stage so that the final image will only contain
 # the compiled release and other runtime necessities
-FROM ${RUNNER_IMAGE}
+FROM ${RUNNER_IMAGE} as runner
+ARG APP_NAME
+ARG APP_ROOT
+ENV MIX_ENV="prod"
 
 RUN apt-get update -y && apt-get install -y libstdc++6 openssl libncurses5 locales \
-  && apt-get clean && rm -f /var/lib/apt/lists/*_*
+    && apt-get clean && rm -f /var/lib/apt/lists/*_*
 
 # Set the locale
 RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
-
 ENV LANG en_US.UTF-8
 ENV LANGUAGE en_US:en
 ENV LC_ALL en_US.UTF-8
 
-WORKDIR "/app"
-RUN chown nobody /app
+#WORKDIR ${APP_ROOT}
+ENV USER="elixir"
 
-# set runner ENV
-ENV MIX_ENV="prod"
+# Creates an system user to be used exclusively to run the app
+# This user has the shell /usr/sbin/nologin
+RUN adduser --system --group --uid=1000 ${USER}
+# Make a directory to hold the release, in the system users home directory
+RUN mkdir "/home/${USER}${APP_ROOT}"
+# Give the user ownership of its home directory
+RUN chown -R "${USER}:${USER}" "/home/${USER}"
 
-# Only copy the final release from the build stage
-COPY --from=builder --chown=nobody:root /app/_build/${MIX_ENV}/rel/hello ./
+# Everything from this line onwards will run in the context of the system user.
+USER "${USER}"
 
-USER nobody
+# Copy the release to the system users home directory
+WORKDIR "/home/${USER}${APP_ROOT}"
+COPY --from=builder --chown="${USER}":"${USER}" ${APP_ROOT}/_build/${MIX_ENV}/rel/${APP_NAME} ./
 
-CMD ["/app/bin/server"]
+CMD ./bin/server

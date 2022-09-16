@@ -1,0 +1,39 @@
+version: '3.8'
+
+networks:
+  webnet:
+    driver: overlay
+    attachable: true
+volumes:
+  postgres_data:
+
+services:
+  db:
+    image: postgres:14.5
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      restart_policy:
+        condition: on-failure
+    volumes:
+      - "postgres_data:/var/lib/postgresql/data"
+    env_file:
+      - config/docker.env
+    networks:
+      - webnet
+
+  web:
+    image: codelever/hello_app:0.1.0
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+    ports:
+      - "80:4000"
+    depends_on:
+      - db
+    env_file:
+      - config/docker.env
+    networks:
+      - webnet

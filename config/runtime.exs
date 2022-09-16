@@ -63,6 +63,10 @@ if config_env() == :prod do
     ],
     secret_key_base: secret_key_base
 
+  log_level = String.to_existing_atom(System.get_env("PHX_LOG_LEVEL") || "info");
+
+  config :logger, level: log_level
+
   # ## Configuring the mailer
   #
   # In production you need to configure the mailer to use a different adapter.
